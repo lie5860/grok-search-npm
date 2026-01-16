@@ -1,13 +1,14 @@
-import fs from 'fs/promises';
-import path from 'path';
-import { config } from '../config/index.js';
-import type { MCPContext } from '../types/index.js';
+import fs from "fs/promises";
+import path from "path";
+
+import { config } from "../config/index.js";
+
+import type { MCPContext } from "../types/index.js";
 
 /**
  * 异步日志工具
  */
 export class Logger {
-  private logFile!: string;
 
   constructor() {
     this.ensureLogDir();
@@ -18,33 +19,33 @@ export class Logger {
   }
 
   private getLogFilePath(): string {
-    const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    return path.join(config.logDir, `grok_search_${date}.log`);
+    const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+    return path.join(config.logDir, `openai_search_${date}.log`);
   }
 
   private async writeLog(level: string, message: string): Promise<void> {
-    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
     const logLine = `[${timestamp}] [${level}] ${message}\n`;
 
     // 写入文件
     try {
-      await fs.appendFile(this.getLogFilePath(), logLine, 'utf-8');
-    } catch (error) {
+      await fs.appendFile(this.getLogFilePath(), logLine, "utf-8");
+    } catch (_error) {
       // 忽略日志写入错误
     }
   }
 
   info(message: string): void {
-    this.writeLog('INFO', message);
+    this.writeLog("INFO", message);
   }
 
   error(message: string): void {
-    this.writeLog('ERROR', message);
+    this.writeLog("ERROR", message);
   }
 
   debug(message: string): void {
     if (config.debugEnabled) {
-      this.writeLog('DEBUG', message);
+      this.writeLog("DEBUG", message);
     }
   }
 }
@@ -54,7 +55,11 @@ const logger = new Logger();
 /**
  * 记录信息到 MCP 上下文和日志
  */
-export async function logInfo(ctx: MCPContext | undefined, message: string, isDebug: boolean = false): Promise<void> {
+export async function logInfo(
+  ctx: MCPContext | undefined,
+  message: string,
+  isDebug: boolean = false
+): Promise<void> {
   if (isDebug) {
     logger.debug(message);
   }

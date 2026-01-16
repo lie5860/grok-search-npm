@@ -1,15 +1,18 @@
 #!/usr/bin/env node
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-import { config } from './config/index.js';
-import { GrokSearchProvider } from './providers/grok.js';
-import { logInfo } from './utils/logger.js';
-import { formatSearchResults, parseSearchResults } from './utils/format.js';
-import type { SearchResult } from './types/index.js';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { createRequire } from "module";
+
+import { config } from "./config/index.js";
+import { OpenAISearchProvider } from "./providers/openai.js";
+import { logInfo } from "./utils/logger.js";
+import fetch from "node-fetch";
+
+import type { TestResult } from "./types/index.js";
+
+const require = createRequire(import.meta.url);
+const pkg = require("../package.json") as { version: string };
 
 interface IMCPContext {
   info?: (message: string) => Promise<void>;
@@ -17,367 +20,284 @@ interface IMCPContext {
 }
 
 // 创建 MCP 服务器
-const server = new Server(
-  {
-    name: 'grok-search',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
+const server = new McpServer({
+  name: "openai-search",
+  version: "1.0.0",
+});
 
 /**
  * 实现上下文报告
  */
 class MCPCtx implements IMCPContext {
-  constructor(private requestId?: string) {}
-
   async info(message: string): Promise<void> {
-    // MCP SDK 没有直接的 info 方法，这里通过日志记录
-    // 实际使用中可以发送通知
     console.error(message);
   }
 
   async reportProgress(progress: number, total?: number): Promise<void> {
-    // MCP SDK 没有直接的进度报告方法
-    console.error(`Progress: ${progress}${total ? `/${total}` : ''}`);
+    console.error(`Progress: ${progress}${total ? `/${total}` : ""}`);
   }
 }
 
-/**
- * 获取配置信息工具
- */
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      {
-        name: 'web_search',
-        description: `执行网络搜索并返回结构化结果。
+// 注册 web_search 工具
+server.registerTool(
+  "web_search",
+  {
+    description: `Performs a third-party web search based on the given query and returns the results as a JSON string.
 
-工具描述：执行网络搜索并返回结构化结果
-- 支持多源信息聚合
-- 返回包含标题、链接、摘要的标准化结果
-- 可指定搜索平台和结果数量
+The \`query\` should be a clear, self-contained natural-language search query.
+When helpful, include constraints such as topic, time range, language, or domain.
 
-参数说明：
-- query (必填): 搜索关键词
-- platform (可选): 指定搜索平台，如 "github", "stackoverflow"
-- min_results (可选): 最小结果数，默认 3
-- max_results (可选): 最大结果数，默认 10`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: '搜索关键词',
-            },
-            platform: {
-              type: 'string',
-              description: '指定搜索平台',
-            },
-            min_results: {
-              type: 'number',
-              description: '最小结果数',
-              default: 3,
-            },
-            max_results: {
-              type: 'number',
-              description: '最大结果数',
-              default: 10,
-            },
-          },
-          required: ['query'],
-        },
-      },
-      {
-        name: 'web_fetch',
-        description: `抓取指定 URL 的完整内容并返回结构化 Markdown 文档。
+The \`platform\` should be the platforms which you should focus on searching, such as "Twitter", "GitHub", "Reddit", etc.
 
-工具描述：抓取指定 URL 的完整内容
-- 提取完整的网页内容（文本、图片、链接、表格、代码块）
-- 转换为结构化的 Markdown 格式
-- 保留原始内容的层次结构和格式
-- 自动移除脚本、样式等非内容元素
+The \`min_results\` and \`max_results\` should be the minimum and maximum number of results to return.
 
-参数说明：
-- url (必填): 要抓取的网页 URL，必须是有效的 HTTP/HTTPS 地址`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            url: {
-              type: 'string',
-              description: '要抓取的网页 URL',
-            },
-          },
-          required: ['url'],
-        },
-      },
-      {
-        name: 'get_config_info',
-        description: `获取 Grok Search 的配置信息和连接状态。
+Returns
+-------
+A JSON-encoded string representing a list of search results. Each result includes at least:
+- \`url\`: the link to the result
+- \`title\`: a short title
+- \`summary\`: a brief description or snippet of the page content.`,
+    inputSchema: {
+      query: z.string().describe("Search query keyword"),
+      platform: z.string().optional().describe("Specify search platform"),
+      min_results: z.number().optional().default(3).describe("Minimum number of results"),
+      max_results: z.number().optional().default(10).describe("Maximum number of results"),
+    },
+  },
+  async ({ query, platform = "", min_results = 3, max_results = 10 }) => {
+    const ctx = new MCPCtx();
+    const openaiConfig = await config.getConfig();
+    const provider = new OpenAISearchProvider(openaiConfig.apiUrl, openaiConfig.apiKey, openaiConfig.model);
 
-工具描述：获取配置信息和诊断连接状态
-- 显示当前的 API URL 和模型配置
-- 测试与 Grok API 的连接
-- 返回响应时间和可用模型信息
-- 识别并报告配置错误
+    await logInfo(ctx, `Begin Search: ${query}`, config.debugEnabled);
+    const results = await provider.search(query, platform, min_results, max_results, ctx);
+    await logInfo(ctx, "Search Finished!", config.debugEnabled);
 
-无需参数`,
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      },
-      {
-        name: 'switch_model',
-        description: `切换 Grok 模型并持久化设置。
+    return { content: [{ type: "text", text: results }] };
+  }
+);
 
-工具描述：切换 Grok 模型
-- 更改用于网络搜索和内容获取的 AI 模型
-- 测试不同模型的性能或质量
-- 持久化模型偏好设置
+// 注册 web_fetch 工具
+server.registerTool(
+  "web_fetch",
+  {
+    description: `Fetches and extracts the complete content from a specified URL and returns it as a structured Markdown document.
 
-参数说明：
-- model (必填): 要切换到的模型 ID，如 "grok-4-fast", "grok-2-latest", "grok-vision-beta"`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            model: {
-              type: 'string',
-              description: '模型 ID',
-              enum: ['grok-4-fast', 'grok-2-latest', 'grok-vision-beta'],
-            },
-          },
-          required: ['model'],
-        },
-      },
-      {
-        name: 'toggle_builtin_tools',
-        description: `禁用或启用 Claude 内置的 WebSearch/WebFetch 工具。
+The \`url\` should be a valid HTTP/HTTPS web address pointing to the target page.
+Ensure the URL is complete and accessible (not behind authentication or paywalls).
 
-工具描述：切换内置工具状态
-- 强制所有搜索请求路由到 Grok Search
-- 可配置禁用列表（deny_list）
-- 配置保存在 ~/.config/claude/claude_desktop_config.json
+The function will:
+- Retrieve the full HTML content from the URL
+- Parse and extract all meaningful content (text, images, links, tables, code blocks)
+- Convert the HTML structure to well-formatted Markdown
+- Preserve the original content hierarchy and formatting
+- Remove scripts, styles, and other non-content elements
 
-参数说明：
-- action (可选): 操作类型，"on" 启用禁用，"off" 解除禁用，"status" 查看当前状态`,
-        inputSchema: {
-          type: 'object',
-          properties: {
-            action: {
-              type: 'string',
-              description: '操作类型',
-              enum: ['on', 'off', 'status'],
-              default: 'status',
-            },
-          },
-        },
-      },
-    ],
-  };
-});
+Returns
+-------
+A Markdown-formatted string containing:
+- Metadata header (source URL, title, fetch timestamp)
+- Table of Contents (if applicable)
+- Complete page content with preserved structure
+- All text, links, images, tables, and code blocks from the original page
 
-/**
- * 处理工具调用
- */
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-  const ctx = new MCPCtx();
+The output maintains 100% content fidelity with the source page and is ready for documentation, analysis, or further processing.
 
-  try {
-    switch (name) {
-      case 'web_search': {
-        const { query, platform = '', min_results = 3, max_results = 10 } = args as any;
+Notes
+-----
+- Does NOT summarize or modify content - returns complete original text
+- Handles special characters, encoding (UTF-8), and nested structures
+- May not capture dynamically loaded content requiring JavaScript execution
+- Respects the original language without translation`,
+    inputSchema: {
+      url: z.string().describe("The URL of the web page to fetch"),
+    },
+  },
+  async ({ url }) => {
+    const ctx = new MCPCtx();
+    const openaiConfig = await config.getConfig();
+    const provider = new OpenAISearchProvider(openaiConfig.apiUrl, openaiConfig.apiKey, openaiConfig.model);
 
-        if (!query || typeof query !== 'string') {
-          throw new Error('参数 query 必须是非空字符串');
+    await logInfo(ctx, `Begin Fetch: ${url}`, config.debugEnabled);
+    const results = await provider.fetch(url, ctx);
+    await logInfo(ctx, "Fetch Finished!", config.debugEnabled);
+
+    return { content: [{ type: "text", text: results }] };
+  }
+);
+
+// 注册 get_config_info 工具
+server.registerTool(
+  "get_config_info",
+  {
+    description: `Returns the current OpenAI Search MCP server configuration information and tests the connection.
+
+This tool is useful for:
+- Verifying that environment variables are correctly configured
+- Testing API connectivity by sending a request to /models endpoint
+- Debugging configuration issues
+- Checking the current API endpoint and settings
+
+Returns
+-------
+A JSON-encoded string containing configuration details:
+- \`api_url\`: The configured OpenAI-compatible API endpoint
+- \`api_key\`: The API key (masked for security, showing only first and last 4 characters)
+- \`model\`: The currently selected model for search and fetch operations
+- \`debug_enabled\`: Whether debug mode is enabled
+- \`log_level\`: Current logging level
+- \`log_dir\`: Directory where logs are stored
+- \`config_status\`: Overall configuration status (✅ complete or ❌ error)
+- \`connection_test\`: Result of testing API connectivity to /models endpoint
+  - \`status\`: Connection status
+  - \`message\`: Status message with model count
+  - \`response_time_ms\`: API response time in milliseconds
+  - \`available_models\`: List of available model IDs (only present on successful connection)
+
+Notes
+-----
+- API keys are automatically masked for security
+- This tool does not require any parameters
+- Useful for troubleshooting before making actual search requests
+- Automatically tests API connectivity during execution`,
+  },
+  async () => {
+    const validation = await config.validate();
+    const openaiConfig = await config.getConfig();
+
+    let testResult: TestResult | undefined;
+    if (validation.valid) {
+      try {
+        const startTime = Date.now();
+        const response = await fetch(`${openaiConfig.apiUrl}/models`, {
+          headers: { Authorization: `Bearer ${openaiConfig.apiKey}` },
+        });
+        const responseTime = Date.now() - startTime;
+
+        if (response.ok) {
+          const data = (await response.json()) as { data?: Array<unknown> };
+          testResult = {
+            success: true,
+            response_time: responseTime,
+            model_count: data.data?.length || 0,
+          };
+        } else {
+          testResult = { success: false, error: `HTTP ${response.status}` };
         }
-
-        const grokConfig = await config.getConfig();
-        const provider = new GrokSearchProvider(
-          grokConfig.apiUrl,
-          grokConfig.apiKey,
-          grokConfig.model
-        );
-
-        await logInfo(ctx, `Begin Search: ${query}`, config.debugEnabled);
-        const results = await provider.search(
-          query,
-          platform,
-          min_results,
-          max_results,
-          ctx
-        );
-        await logInfo(ctx, 'Search Finished!', config.debugEnabled);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: results,
-            },
-          ],
+      } catch (error) {
+        testResult = {
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
         };
       }
-
-      case 'web_fetch': {
-        const { url } = args as any;
-
-        if (!url || typeof url !== 'string') {
-          throw new Error('参数 url 必须是非空字符串');
-        }
-
-        const grokConfig = await config.getConfig();
-        const provider = new GrokSearchProvider(
-          grokConfig.apiUrl,
-          grokConfig.apiKey,
-          grokConfig.model
-        );
-
-        await logInfo(ctx, `Begin Fetch: ${url}`, config.debugEnabled);
-        const results = await provider.fetch(url, ctx);
-        await logInfo(ctx, 'Fetch Finished!', config.debugEnabled);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: results,
-            },
-          ],
-        };
-      }
-
-      case 'get_config_info': {
-        const validation = await config.validate();
-        const grokConfig = await config.getConfig();
-
-        let testResult: any = undefined;
-        if (validation.valid) {
-          try {
-            const startTime = Date.now();
-            const response = await fetch(`${grokConfig.apiUrl}/models`, {
-              headers: {
-                'Authorization': `Bearer ${grokConfig.apiKey}`,
-              },
-            });
-            const responseTime = Date.now() - startTime;
-
-            if (response.ok) {
-              const data = await response.json() as { data?: Array<unknown> };
-              testResult = {
-                success: true,
-                response_time: responseTime,
-                model_count: data.data?.length || 0,
-              };
-            } else {
-              testResult = {
-                success: false,
-                error: `HTTP ${response.status}`,
-              };
-            }
-          } catch (error) {
-            testResult = {
-              success: false,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            };
-          }
-        }
-
-        const result = {
-          api_url: grokConfig.apiUrl,
-          api_key_prefix: grokConfig.apiKey.substring(0, 10) + '...',
-          model: grokConfig.model,
-          status: validation.valid ? '✅ 配置有效' : '❌ 配置无效',
-          test_result: testResult,
-        };
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'switch_model': {
-        const { model } = args as any;
-
-        if (!model || typeof model !== 'string') {
-          throw new Error('参数 model 必须是非空字符串');
-        }
-
-        const previousModel = await config.getConfig().then(c => c.model);
-        await config.switchModel(model);
-
-        const result = {
-          status: 'success',
-          previous_model: previousModel,
-          current_model: model,
-          message: `模型已从 ${previousModel} 切换到 ${model}`,
-          config_file: config.configFile,
-        };
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      case 'toggle_builtin_tools': {
-        const { action = 'status' } = args as any;
-
-        // 这里简化实现，实际需要操作 Claude Desktop 配置文件
-        const result = {
-          blocked: action === 'on',
-          deny_list: ['WebSearch', 'WebFetch'],
-          file: '~/.config/claude/claude_desktop_config.json',
-          message: action === 'on'
-            ? '已禁用官方 WebSearch/WebFetch 工具'
-            : action === 'off'
-            ? '已启用官方 WebSearch/WebFetch 工具'
-            : '当前状态：' + (action === 'on' ? '已禁用' : '已启用'),
-        };
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
-        };
-      }
-
-      default:
-        throw new Error(`未知工具: ${name}`);
     }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    const result = {
+      version: pkg.version,
+      api_url: openaiConfig.apiUrl,
+      api_key_prefix: openaiConfig.apiKey.substring(0, 10) + "...",
+      model: openaiConfig.model,
+      status: validation.valid ? "✅ Configuration valid" : "❌ Configuration invalid",
+      test_result: testResult,
+    };
+
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// 注册 switch_model 工具
+server.registerTool(
+  "switch_model",
+  {
+    description: `Switches the default AI model used for search and fetch operations, and persists the setting.
+
+This tool is useful for:
+- Changing the AI model used for web search and content fetching
+- Testing different models for performance or quality comparison
+- Persisting model preference across sessions
+
+Parameters
+----------
+model : str
+    The model ID to switch to (e.g., "gpt-4o", "gpt-4o-mini")
+
+Returns
+-------
+A JSON-encoded string containing:
+- \`status\`: Success or error status
+- \`previous_model\`: The model that was being used before
+- \`current_model\`: The newly selected model
+- \`message\`: Status message
+- \`config_file\`: Path where the model preference is saved
+
+Notes
+-----
+- The model setting is persisted to ~/.config/openai-search/config.json
+- This setting will be used for all future search and fetch operations
+- You can verify available models using the get_config_info tool`,
+    inputSchema: {
+      model: z.union([
+        z.enum(["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"]),
+        z.string()
+      ]).describe("Model ID")
+    },
+  },
+  async ({ model }) => {
+    const previousModel = await config.getConfig().then((c) => c.model);
+    await config.switchModel(model);
+
+    const result = {
+      status: "success",
+      previous_model: previousModel,
+      current_model: model,
+      message: `Model switched from ${previousModel} to ${model}`,
+      config_file: config.configFile,
+    };
+
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+  }
+);
+
+// 注册 toggle_builtin_tools 工具
+server.registerTool(
+  "toggle_builtin_tools",
+  {
+    description: `Toggle Claude Code's built-in WebSearch and WebFetch tools on/off.
+
+Parameters: action - "on" (block built-in), "off" (allow built-in), "status" (check)
+Returns: JSON with current status and deny list`,
+    inputSchema: {
+      action: z.enum(["on", "off", "status"]).optional().default("status").describe("Action type"),
+    },
+  },
+  async ({ action }) => {
+    const blocked = action === "on";
+    const message =
+      action === "on"
+        ? "Built-in WebSearch/WebFetch tools have been disabled"
+        : action === "off"
+          ? "Built-in WebSearch/WebFetch tools have been enabled"
+          : "Current status query";
+
     return {
       content: [
         {
-          type: 'text',
-          text: JSON.stringify({
-            error: errorMessage,
-            tool: name,
-          }, null, 2),
+          type: "text",
+          text: JSON.stringify(
+            {
+              blocked,
+              deny_list: ["WebSearch", "WebFetch"],
+              file: "~/.config/claude/claude_desktop_config.json",
+              message,
+            },
+            null,
+            2
+          ),
         },
       ],
-      isError: true,
     };
   }
-});
+);
 
 /**
  * 启动服务器
@@ -385,10 +305,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Grok Search MCP server running on stdio');
+  console.error("OpenAI Search MCP server running on stdio");
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  console.error("Fatal error:", error);
   process.exit(1);
 });

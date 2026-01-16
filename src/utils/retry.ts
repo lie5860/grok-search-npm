@@ -21,7 +21,7 @@ export async function retryWithContext<T>(
     initialDelay = 1000,
     maxDelay = 10000,
     backoffMultiplier = 2,
-    onRetry
+    onRetry,
   } = options;
 
   let lastError: Error | null = null;
@@ -42,7 +42,7 @@ export async function retryWithContext<T>(
       }
 
       // 等待后重试
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * backoffMultiplier, maxDelay);
     }
   }
@@ -53,8 +53,11 @@ export async function retryWithContext<T>(
 /**
  * 检查错误是否可重试
  */
-export function isRetriableError(error: any): boolean {
-  if (error?.code === 'ECONNRESET' || error?.code === 'ETIMEDOUT') {
+export function isRetriableError(error: {
+  code?: string;
+  response?: { status?: number };
+}): boolean {
+  if (error?.code === "ECONNRESET" || error?.code === "ETIMEDOUT") {
     return true;
   }
 

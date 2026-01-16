@@ -18,9 +18,9 @@ export interface MCPContext {
 }
 
 /**
- * Grok 配置
+ * OpenAI 配置
  */
-export interface GrokConfig {
+export interface OpenAIConfig {
   apiUrl: string;
   apiKey: string;
   model: string;
@@ -41,7 +41,7 @@ export interface SearchParams {
  * 模型切换结果
  */
 export interface ModelSwitchResult {
-  status: 'success' | 'error';
+  status: "success" | "error";
   previous_model?: string;
   current_model: string;
   message: string;
@@ -72,4 +72,92 @@ export interface BuiltinToolsToggleResult {
   deny_list: string[];
   file: string;
   message: string;
+}
+
+/**
+ * OpenAI API 聊天消息
+ */
+export interface OpenAIMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/**
+ * OpenAI API 请求负载
+ */
+export interface OpenAIPayload {
+  model: string;
+  messages: OpenAIMessage[];
+  stream: boolean;
+  [key: string]: unknown; // 允许其他动态字段
+}
+
+/**
+ * OpenAI API 流式响应选择
+ */
+export interface OpenAIChoice {
+  delta: {
+    content?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+/**
+ * OpenAI API 流式响应解析
+ */
+export interface OpenAIStreamResponse {
+  choices: OpenAIChoice[];
+  [key: string]: unknown;
+}
+
+/**
+ * 通用配置对象类型
+ */
+export type ConfigObject = Record<string, unknown>;
+
+/**
+ * 通用错误类型
+ */
+export type ErrorLike = Error | { message: string };
+
+/**
+ * web_search 工具参数
+ */
+export interface WebSearchParams {
+  query: string;
+  platform?: string;
+  min_results?: number;
+  max_results?: number;
+}
+
+/**
+ * web_fetch 工具参数
+ */
+export interface WebFetchParams {
+  url: string;
+}
+
+/**
+ * switch_model 工具参数
+ */
+export interface SwitchModelParams {
+  model: string;
+}
+
+/**
+ * toggle_builtin_tools 工具参数
+ */
+export interface ToggleBuiltinToolsParams {
+  action?: string;
+}
+
+/**
+ * 测试结果类型
+ */
+export interface TestResult {
+  success: boolean;
+  response_time?: number;
+  model_count?: number;
+  error?: string;
 }

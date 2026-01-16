@@ -1,11 +1,11 @@
-import type { SearchResult } from '../types/index.js';
+import type { SearchResult } from "../types/index.js";
 
 /**
  * 格式化搜索结果
  */
 export function formatSearchResults(results: SearchResult[]): string {
   if (!results || results.length === 0) {
-    return 'No results found.';
+    return "No results found.";
   }
 
   const formatted = results.map((result, index) => {
@@ -27,10 +27,10 @@ export function formatSearchResults(results: SearchResult[]): string {
       parts.push(`**Published:** ${result.published_date}`);
     }
 
-    return parts.join('\n');
+    return parts.join("\n");
   });
 
-  return formatted.join('\n\n---\n\n');
+  return formatted.join("\n\n---\n\n");
 }
 
 /**
@@ -44,7 +44,7 @@ export function parseSearchResults(text: string): SearchResult[] {
       return JSON.parse(jsonMatch[0]);
     }
     return [];
-  } catch (error) {
+  } catch (_error) {
     return [];
   }
 }
@@ -52,6 +52,6 @@ export function parseSearchResults(text: string): SearchResult[] {
 /**
  * 格式化为 JSON 字符串
  */
-export function formatJson(data: any): string {
+export function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2);
 }

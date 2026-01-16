@@ -1,22 +1,27 @@
 {
-  "name": "grok-search-mcp",
-  "version": "1.0.1",
-  "description": "MCP server for AI model search capabilities using Grok",
+  "name": "openai-search-mcp",
+  "version": "0.0.1",
+  "description": "MCP server for AI model search capabilities using OpenAI-compatible APIs",
   "type": "module",
   "main": "dist/server.js",
   "bin": {
-    "grok-search": "./bin/grok-search.js"
+    "openai-search": "bin/openai-search.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc && node dist/server.js",
     "start": "node dist/server.js",
     "watch": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "type-check": "tsc --noEmit"
   },
   "keywords": [
     "mcp",
-    "grok",
+    "openai",
     "search",
     "ai",
     "claude",
@@ -26,22 +31,33 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lie5860/grok-search-npm.git"
+    "url": "git+https://github.com/lie5860/openai-search-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/lie5860/grok-search-npm/issues"
+    "url": "https://github.com/lie5860/openai-search-mcp/issues"
   },
-  "homepage": "https://github.com/lie5860/grok-search-npm#readme",
+  "homepage": "https://github.com/lie5860/openai-search-mcp#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=14.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
-    "dotenv": "^16.4.5"
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^3.3.2",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@types/node": "^20.14.9",
-    "typescript": "^5.5.3"
+    "@typescript-eslint/eslint-plugin": "^8.53.0",
+    "@typescript-eslint/parser": "^8.53.0",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-prettier": "^5.5.4",
+    "prettier": "^3.7.4",
+    "typescript": "^5.5.3",
+    "typescript-eslint": "^8.53.0"
   },
   "files": [
     "dist",
